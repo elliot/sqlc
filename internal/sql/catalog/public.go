@@ -33,6 +33,15 @@ func (c *Catalog) ListFuncsByName(rel *ast.FuncName) ([]Function, error) {
 }
 
 func (c *Catalog) ResolveFuncCall(call *ast.FuncCall) (*Function, error) {
+	return c.ResolveFuncCallWithArgTypes(call, nil)
+}
+
+// ResolveFuncCallWithArgTypes resolves a call the way ResolveFuncCall does,
+// and uses what the caller knows of its positional arguments' types to choose
+// among overloads that take the same number of arguments: argTypes[i] is the
+// type name of the i-th, or "" when it is not known. With nothing known, the
+// first overload that fits is chosen, as it always has been.
+func (c *Catalog) ResolveFuncCallWithArgTypes(call *ast.FuncCall, argTypes []string) (*Function, error) {
 	// Do not validate unknown functions
 	funs, err := c.ListFuncsByName(call.Func)
 	if err != nil || len(funs) == 0 {
@@ -63,6 +72,8 @@ func (c *Catalog) ResolveFuncCall(call *ast.FuncCall) (*Function, error) {
 		}
 	}
 
+	var best *Function
+	bestScore := 0
 	for _, fun := range funs {
 		args := fun.InArgs()
 		var defaults int
@@ -107,7 +118,13 @@ func (c *Catalog) ResolveFuncCall(call *ast.FuncCall) (*Function, error) {
 			continue
 		}
 
-		return &fun, nil
+		score := c.argTypesScore(args, argTypes)
+		if best == nil || score > bestScore {
+			best, bestScore = &fun, score
+		}
+	}
+	if best != nil {
+		return best, nil
 	}
 
 	var sig []string
@@ -121,6 +138,50 @@ func (c *Catalog) ResolveFuncCall(call *ast.FuncCall) (*Function, error) {
 		Location: call.Pos(),
 		// Hint: "No function matches the given name and argument types. You might need to add explicit type casts.",
 	}
+}
+
+// argTypesScore is how well a function's parameters take arguments of the
+// given types. It weighs only polymorphic range and multirange parameters,
+// whose rules hold without knowing the engine's casts: a range parameter
+// takes a range and nothing else, and a multirange parameter takes nothing
+// known to be something else. Every other parameter is left to overload
+// order, as it always has been.
+func (c *Catalog) argTypesScore(params []*Argument, argTypes []string) int {
+	score := 0
+	for i, arg := range argTypes {
+		if arg == "" || arg == "any" || i >= len(params) || params[i].Type == nil {
+			continue
+		}
+		param := strings.ToLower(params[i].Type.Name)
+		_, isRange := c.RangeElement(arg)
+		switch {
+		case param == "anyrange" || param == "anycompatiblerange":
+			if isRange {
+				score += 2
+			} else {
+				score -= 1
+			}
+		case param == "anymultirange" || param == "anycompatiblemultirange":
+			if !strings.HasSuffix(normalizeTypeName(arg), "multirange") {
+				score -= 1
+			}
+		}
+	}
+	return score
+}
+
+// RangeElement reports the subtype of a range type, the type of its bounds,
+// when typeName names a range type the engine knows.
+func (c *Catalog) RangeElement(typeName string) (string, bool) {
+	element, ok := c.RangeElements[normalizeTypeName(typeName)]
+	return element, ok
+}
+
+// normalizeTypeName spells a built-in type name the way an engine's seed
+// does: in lower case, without the pg_catalog schema the legacy catalog
+// sometimes qualifies it with.
+func normalizeTypeName(typeName string) string {
+	return strings.TrimPrefix(strings.ToLower(typeName), "pg_catalog.")
 }
 
 func (c *Catalog) GetTable(rel *ast.TableName) (Table, error) {

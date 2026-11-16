@@ -12,6 +12,7 @@ func NewCatalog() *catalog.Catalog {
 	c.Schemas = append(c.Schemas, genInformationSchema())
 	c.SearchPath = []string{"pg_catalog"}
 	c.LoadExtension = loadExtension
+	c.RangeElements = rangeElements()
 	return c
 }
 

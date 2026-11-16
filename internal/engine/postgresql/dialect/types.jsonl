@@ -38,11 +38,11 @@
 {"name": "path", "category": "U"}
 {"name": "polygon", "category": "U"}
 {"name": "circle", "category": "U"}
-{"name": "int4range", "category": "U"}
-{"name": "int8range", "category": "U"}
-{"name": "numrange", "category": "U"}
-{"name": "tsrange", "category": "U"}
-{"name": "tstzrange", "category": "U"}
-{"name": "daterange", "category": "U"}
+{"name": "int4range", "category": "U", "element": "integer"}
+{"name": "int8range", "category": "U", "element": "bigint"}
+{"name": "numrange", "category": "U", "element": "numeric"}
+{"name": "tsrange", "category": "U", "element": "timestamp without time zone"}
+{"name": "tstzrange", "category": "U", "element": "timestamp with time zone"}
+{"name": "daterange", "category": "U", "element": "date"}
 {"name": "anyarray", "category": "A"}
 {"name": "array", "category": "A"}

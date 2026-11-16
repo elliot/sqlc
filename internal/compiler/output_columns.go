@@ -3,6 +3,7 @@ package compiler
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/sqlc-dev/sqlc/internal/config"
 	"github.com/sqlc-dev/sqlc/internal/sql/ast"
@@ -163,7 +164,15 @@ func (c *Compiler) outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, er
 				// TODO: Generate a name for these operations
 				cols = append(cols, &Column{Name: name, DataType: "bool", NotNull: true})
 			case lang.IsMathematicalOperator(op):
-				cols = append(cols, &Column{Name: name, DataType: "int", NotNull: true})
+				dataType := "int"
+				if isRangeOperator(op) {
+					left := operandType(n.Lexpr, res, tables, rtables)
+					right := operandType(n.Rexpr, res, tables, rtables)
+					if rng := rangeOperands(qc.catalog, left, right); rng != "" {
+						dataType = rng
+					}
+				}
+				cols = append(cols, &Column{Name: name, DataType: dataType, NotNull: true})
 			default:
 				cols = append(cols, &Column{Name: name, DataType: "any", NotNull: false})
 			}
@@ -320,14 +329,17 @@ func (c *Compiler) outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, er
 			if res.Name != nil {
 				name = *res.Name
 			}
-			fun, err := qc.catalog.ResolveFuncCall(n)
+			argTypes := funcArgTypes(n, res, tables, rtables)
+			fun, err := qc.catalog.ResolveFuncCallWithArgTypes(n, argTypes)
 			if err == nil {
-				cols = append(cols, &Column{
+				col := &Column{
 					Name:       name,
 					DataType:   dataType(fun.ReturnType),
 					NotNull:    !fun.ReturnTypeNullable,
 					IsFuncCall: true,
-				})
+				}
+				resolveRangeReturn(qc.catalog, fun, argTypes, col)
+				cols = append(cols, col)
 			} else {
 				cols = append(cols, &Column{
 					Name:       name,
@@ -424,6 +436,93 @@ const (
 	tableRequired
 	tableOptional
 )
+
+// operandType is the type of an operand when it can be told without
+// analysis: a column's type, or the type a cast names. It is "" otherwise,
+// and for an array, whose element type is all a Column spells.
+func operandType(n ast.Node, res *ast.ResTarget, tables, rtables []*Table) string {
+	switch n := n.(type) {
+	case *ast.ColumnRef:
+		if hasStarRef(n) {
+			return ""
+		}
+		refs, err := outputColumnRefs(res, tablesForRef(n, tables, rtables), n)
+		if err != nil || len(refs) != 1 || refs[0].IsArray {
+			return ""
+		}
+		return refs[0].DataType
+	case *ast.TypeCast:
+		if n.TypeName == nil {
+			return ""
+		}
+		col := toColumn(n.TypeName)
+		if col.IsArray {
+			return ""
+		}
+		return col.DataType
+	}
+	return ""
+}
+
+// funcArgTypes is the type of each positional argument of a call, as far as
+// operandType can tell.
+func funcArgTypes(call *ast.FuncCall, res *ast.ResTarget, tables, rtables []*Table) []string {
+	if call.Args == nil {
+		return nil
+	}
+	types := make([]string, len(call.Args.Items))
+	for i, arg := range call.Args.Items {
+		types[i] = operandType(arg, res, tables, rtables)
+	}
+	return types
+}
+
+// resolveRangeReturn gives a function that takes a range, and whose result is
+// polymorphic, the type it returns for the range it was called with: a bound,
+// as lower(anyrange) returns, has the range's subtype and is NULL when the
+// range is empty or unbounded on that side; a range, as range_merge returns,
+// is the argument's range type.
+func resolveRangeReturn(cat *catalog.Catalog, fun *catalog.Function, argTypes []string, col *Column) {
+	params := fun.InArgs()
+	if len(params) == 0 || len(argTypes) == 0 || params[0].Type == nil || fun.ReturnType == nil {
+		return
+	}
+	switch strings.ToLower(params[0].Type.Name) {
+	case "anyrange", "anycompatiblerange":
+	default:
+		return
+	}
+	element, ok := cat.RangeElement(argTypes[0])
+	if !ok {
+		return
+	}
+	switch strings.ToLower(fun.ReturnType.Name) {
+	case "anyelement", "anycompatible":
+		col.DataType = element
+		col.NotNull = false
+	case "anyrange", "anycompatiblerange":
+		col.DataType = argTypes[0]
+	}
+}
+
+// isRangeOperator reports whether an operator combines two ranges into one
+// when its operands are ranges: + is their union, - their difference and *
+// their intersection.
+func isRangeOperator(op string) bool {
+	return op == "+" || op == "-" || op == "*"
+}
+
+// rangeOperands is the range type an operator on these operands returns: the
+// range type of either operand when it is a range and the other is of the
+// same type or of a type not known. It is "" when neither is a range.
+func rangeOperands(cat *catalog.Catalog, left, right string) string {
+	for _, pair := range [][2]string{{left, right}, {right, left}} {
+		if _, ok := cat.RangeElement(pair[0]); ok && (pair[1] == "" || strings.EqualFold(pair[0], pair[1])) {
+			return pair[0]
+		}
+	}
+	return ""
+}
 
 func isTableRequired(n ast.Node, col *Column, prior int) int {
 	switch n := n.(type) {

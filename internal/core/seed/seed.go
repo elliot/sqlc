@@ -166,6 +166,11 @@ type Type struct {
 	// before it: MySQL's bigint unsigned is a type of its own that
 	// resolves as a bigint where nothing takes it as itself.
 	Base string `json:"base,omitempty"`
+	// Element makes the type a range over the type it names, which must be
+	// listed before it: a bound of a PostgreSQL tstzrange is a timestamp
+	// with time zone. The catalog records it the way it records a range a
+	// schema declares with CREATE TYPE ... AS RANGE.
+	Element string `json:"element,omitempty"`
 }
 
 // Operator is a single operator overload.
@@ -311,7 +316,7 @@ func apply(cat *core.Catalog, fsys fs.FS, settings Settings) error {
 	}
 	// Every dialect has arrays, whether or not its list names the family,
 	// and a lookup of one against the cached catalog cannot add it then.
-	if _, err := b.createType(core.ArrayTypeName, "A", 0); err != nil {
+	if _, err := b.createType(core.TypeSpec{Name: core.ArrayTypeName, Typtype: "b", Category: "A"}); err != nil {
 		return err
 	}
 	if err := b.consts(); err != nil {
@@ -433,6 +438,30 @@ func Functions(fsys fs.FS, dir string) ([]*catalog.Function, error) {
 	return out, nil
 }
 
+// RangeElements maps each range type the dialect defines, by its name and
+// its aliases, to the name of its subtype, for the legacy catalog: it holds
+// types by name rather than as catalog rows.
+func RangeElements(fsys fs.FS, dir string) (map[string]string, error) {
+	sub, err := fs.Sub(fsys, dir)
+	if err != nil {
+		return nil, fmt.Errorf("seed: %s: %w", dir, err)
+	}
+	out := map[string]string{}
+	err = stream(sub, TypesFile, func(t Type) error {
+		if t.Element == "" {
+			return nil
+		}
+		for _, name := range append([]string{t.Name}, t.Aliases...) {
+			out[strings.ToLower(name)] = t.Element
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // Relations streams the relations a dialect ships with in the named schema
 // into the form the engine catalogs use.
 func Relations(fsys fs.FS, dir, schema string) ([]*catalog.Table, error) {
@@ -545,7 +574,16 @@ func (b *builder) addType(t Type) error {
 		}
 		baseOID = oid
 	}
-	oid, err := b.createType(t.Name, t.Category, baseOID)
+	spec := core.TypeSpec{Name: t.Name, Typtype: "b", Category: t.Category, BaseOID: baseOID}
+	if t.Element != "" {
+		oid, ok := b.oids[strings.ToLower(t.Element)]
+		if !ok {
+			return fmt.Errorf("type %q: element %q is not a type listed before it", t.Name, t.Element)
+		}
+		spec.Typtype = "r"
+		spec.ElementOID = oid
+	}
+	oid, err := b.createType(spec)
 	if err != nil {
 		return fmt.Errorf("type %q: %w", t.Name, err)
 	}
@@ -585,23 +623,21 @@ func (b *builder) addAlias(name string, typeOID int64, category string) error {
 	return nil
 }
 
-func (b *builder) createType(name, category string, baseOID int64) (int64, error) {
-	key := strings.ToLower(name)
+// createType registers one of the dialect's own types, unless a type of
+// that name is already registered.
+func (b *builder) createType(spec core.TypeSpec) (int64, error) {
+	key := strings.ToLower(spec.Name)
 	if oid, ok := b.oids[key]; ok {
 		return oid, nil
 	}
-	oid, err := b.cat.CreateTypeSpec(core.TypeSpec{
-		Name:       key,
-		Typtype:    "b",
-		Category:   category,
-		BaseOID:    baseOID,
-		DialectOID: b.dialectOID,
-	})
+	spec.Name = key
+	spec.DialectOID = b.dialectOID
+	oid, err := b.cat.CreateTypeSpec(spec)
 	if err != nil {
 		return 0, err
 	}
 	b.oids[key] = oid
-	b.categories = append(b.categories, categorized{name: key, category: category})
+	b.categories = append(b.categories, categorized{name: key, category: spec.Category})
 	return oid, nil
 }
 

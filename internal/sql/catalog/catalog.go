@@ -13,6 +13,10 @@ type Catalog struct {
 	SearchPath    []string
 	LoadExtension func(string) *Schema
 
+	// RangeElements maps a range type's name to the name of its subtype,
+	// the type of its bounds, for an engine that has range types.
+	RangeElements map[string]string
+
 	// TODO: un-export
 	Extensions map[string]struct{}
 }

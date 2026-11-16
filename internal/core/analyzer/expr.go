@@ -923,6 +923,11 @@ func (a *analyzer) typeFuncCall(f *ast.FuncCall) (exprType, error) {
 		ret = a.lookupType(computed)
 	}
 	ret.nullable = p.ReturnNullable
+	// A range has no bound on a side it leaves open, nor any bound when it
+	// is empty, so a bound taken from one may be NULL whatever the range is.
+	if a.returnsRangeBound(p) {
+		ret.nullable = true
+	}
 	if !p.NeverNull && anyNullable && a.cat.PropagatesNullable() {
 		ret.nullable = true
 	}
@@ -998,6 +1003,13 @@ func (a *analyzer) returnType(p core.ProcOverload, argTypes []exprType) exprType
 			paramName, _ = a.cat.TypeName(p.ArgTypes[0])
 		}
 		switch {
+		case a.returnsRangeBound(p):
+			// A bound taken from a range, lower(anyrange) returning
+			// anyelement, has the range's subtype.
+			if element, ok := a.rangeElement(arg); ok {
+				return element
+			}
+			return exprType{}
 		case isPolymorphicArray(paramName) && !isPolymorphicArray(name):
 			if element := a.exprOf(arg).Element(); element != nil {
 				return a.lookupType(element)
@@ -1037,6 +1049,60 @@ func (a *analyzer) polymorphicArg(p core.ProcOverload, i int, argTypes []exprTyp
 		}
 	}
 	return exprType{}, false
+}
+
+// returnsRangeBound reports whether a function takes a range and returns a
+// value of the range's subtype, as lower(anyrange) and upper(anyrange) do.
+func (a *analyzer) returnsRangeBound(p core.ProcOverload) bool {
+	if len(p.ArgTypes) == 0 {
+		return false
+	}
+	param, err := a.cat.TypeName(p.ArgTypes[0])
+	if err != nil || (param != "anyrange" && param != "anycompatiblerange") {
+		return false
+	}
+	ret, err := a.cat.TypeName(p.ReturnTypeOID)
+	return err == nil && (ret == "anyelement" || ret == "anycompatible")
+}
+
+// rangeElement is the subtype of a range type: the type of its bounds.
+func (a *analyzer) rangeElement(t exprType) (exprType, bool) {
+	if t.typeOID == 0 {
+		return exprType{}, false
+	}
+	info, err := a.cat.LookupType(t.typeOID)
+	if err != nil || info.Typtype != "r" || info.ElementOID == 0 {
+		return exprType{}, false
+	}
+	return exprType{typeOID: info.ElementOID}, true
+}
+
+// polymorphicScore is how well a polymorphic parameter takes an argument,
+// on pickOverload's scale. A range parameter takes only a range, and takes
+// one as closely as a match on the argument's family does, so lower(range)
+// wins over lower(anymultirange) and loses to lower(text) for a text. Any
+// other polymorphic parameter takes anything, as loosely as possible.
+func (a *analyzer) polymorphicScore(param, arg int64) int {
+	if arg == 0 {
+		return 1
+	}
+	name, err := a.cat.TypeName(param)
+	if err != nil {
+		return 1
+	}
+	_, isRange := a.rangeElement(exprType{typeOID: arg})
+	switch name {
+	case "anyrange", "anycompatiblerange":
+		if isRange {
+			return 2
+		}
+		return 0
+	case "anymultirange":
+		if isRange {
+			return 0
+		}
+	}
+	return 1
 }
 
 // isPolymorphicArray reports whether a polymorphic type stands for an array.
@@ -1116,7 +1182,7 @@ func (a *analyzer) pickOverload(overloads []core.ProcOverload, argTypes []int64)
 			case oid != 0 && slices.Contains(chains[j], ov.ArgTypes[j]):
 				score += 2
 			case a.isPolymorphicOID(ov.ArgTypes[j]):
-				score += 1
+				score += a.polymorphicScore(ov.ArgTypes[j], oid)
 			}
 		}
 		if score > bestScore {

@@ -690,6 +690,13 @@ and details settled on the way:
   how MySQL's unsigned families stand on their signed ones: `bigint
   unsigned` is a type of its own, and resolves as a `bigint` where nothing
   takes it as itself.
+- A family in `types.jsonl` may name an `element` listed before it, which
+  makes it a range over that subtype. PostgreSQL's built-in ranges are
+  recorded the way `CREATE TYPE ... AS RANGE` records one, typtype `r` with
+  the subtype in `element_oid`, so `lower(tstzrange)`, whose parameter is
+  `anyrange` and whose result is `anyelement`, reports a `timestamp with time
+  zone`, nullable since an empty or unbounded range has no bound. The legacy
+  catalog reads the same list through `seed.RangeElements`.
 - SQLite's `dialect.json` says `"alias": "base"`, which makes each alias in
   its `types.jsonl` a type of its own standing on the type it aliases,
   rather than another spelling of it.

@@ -43,3 +43,15 @@ var pgCatalogFuncs = sync.OnceValue(func() []*catalog.Function {
 	}
 	return funcs
 })
+
+// rangeElements is the subtype of each of PostgreSQL's range types, read once
+// from the dialect's types.jsonl.
+var rangeElements = sync.OnceValue(func() map[string]string {
+	elements, err := seed.RangeElements(dialectFS, "dialect")
+	if err != nil {
+		// The list is embedded in the binary: a failure here means sqlc was
+		// built from a broken tree, which no caller can do anything about.
+		panic(err)
+	}
+	return elements
+})
