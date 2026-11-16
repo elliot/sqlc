@@ -139,6 +139,9 @@ WHERE dialect_oid = ? ORDER BY ord;
 -- name: CreateClass :execlastid
 INSERT INTO sql_class (namespace_oid, name, kind) VALUES (?, ?, ?);
 
+-- name: CreateDeclaredClass :execlastid
+INSERT INTO sql_class (namespace_oid, name, kind, declared) VALUES (?, ?, ?, 1);
+
 -- name: ClassOID :one
 SELECT oid FROM sql_class WHERE namespace_oid = ? AND name = ?;
 
@@ -148,6 +151,14 @@ SELECT oid FROM sql_class WHERE name = ? LIMIT 1;
 -- name: ListTablesInNamespace :many
 SELECT oid, name FROM sql_class
 WHERE namespace_oid = ? AND kind = 'r'
+ORDER BY oid;
+
+-- name: ListModelClassesInNamespace :many
+-- The relations codegen makes models of: every table, and the views,
+-- materialized views and tables created from a query that the schema
+-- declares, as against the system views a dialect seeds.
+SELECT oid, name FROM sql_class
+WHERE namespace_oid = ? AND (kind = 'r' OR declared = 1)
 ORDER BY oid;
 
 -- name: DeleteClass :exec

@@ -117,6 +117,9 @@ CREATE TABLE sql_class (
     namespace_oid INTEGER NOT NULL REFERENCES sql_namespace(oid),
     name          TEXT NOT NULL,
     kind          TEXT NOT NULL DEFAULT 'r',
+    -- declared: the schema declared the relation, rather than the dialect
+    -- seeding it, so a view it declares is a model as its tables are.
+    declared      INTEGER NOT NULL DEFAULT 0,
     UNIQUE(namespace_oid, name)
 );
 

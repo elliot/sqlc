@@ -12,8 +12,9 @@ import (
 // Result carries, so codegen sees the same table models either way a query
 // set was analyzed. Only relations make the trip: codegen reads tables and
 // their columns to build models, and none of the types, functions or
-// operators the core catalog also holds.
-func coreResultCatalog(c *core.Catalog) (*catalog.Catalog, error) {
+// operators the core catalog also holds. With views, the views the schema
+// declares are models too, as an engine's legacy analysis makes them.
+func coreResultCatalog(c *core.Catalog, views bool) (*catalog.Catalog, error) {
 	cat := catalog.New("public")
 	namespaces, err := c.Namespaces()
 	if err != nil {
@@ -21,7 +22,7 @@ func coreResultCatalog(c *core.Catalog) (*catalog.Catalog, error) {
 	}
 	for _, ns := range namespaces {
 		schema := &catalog.Schema{Name: ns.Name}
-		tables, err := c.TablesInNamespace(ns.OID)
+		tables, err := c.ModelClassesInNamespace(ns.OID, views)
 		if err != nil {
 			return nil, err
 		}

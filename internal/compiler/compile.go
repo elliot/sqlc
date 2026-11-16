@@ -11,6 +11,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
+	"github.com/sqlc-dev/sqlc/internal/config"
 	"github.com/sqlc-dev/sqlc/internal/core"
 	coreschema "github.com/sqlc-dev/sqlc/internal/core/schema"
 	"github.com/sqlc-dev/sqlc/internal/migrations"
@@ -144,7 +145,15 @@ func (c *Compiler) parseCatalogCore(files []schemaFile, merr *multierr.Error) er
 	c.coreCatalog = cat
 
 	// Codegen consumes the catalog through the Result, in the legacy shape.
-	legacy, err := coreResultCatalog(cat)
+	// An engine with a legacy analysis path makes models of the views a
+	// schema declares, so the core path does too for it; the engines that
+	// only ever had the core path keep the models they always had.
+	var views bool
+	switch c.conf.Engine {
+	case config.EnginePostgreSQL, config.EngineMySQL, config.EngineSQLite:
+		views = true
+	}
+	legacy, err := coreResultCatalog(cat, views)
 	if err != nil {
 		return fmt.Errorf("%s: dump catalog: %w", c.conf.Engine, err)
 	}

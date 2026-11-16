@@ -19,6 +19,20 @@ func (c *Catalog) CreateClass(namespaceOID int64, name string, kind string) (int
 	return oid, nil
 }
 
+// CreateDeclaredClass records a relation the schema declares, as against
+// one the dialect seeds.
+func (c *Catalog) CreateDeclaredClass(namespaceOID int64, name string, kind string) (int64, error) {
+	oid, err := c.q.CreateDeclaredClass(context.Background(), catalogdb.CreateDeclaredClassParams{
+		NamespaceOid: namespaceOID,
+		Name:         name,
+		Kind:         kind,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("create class %q: %w", name, err)
+	}
+	return oid, nil
+}
+
 func (c *Catalog) ClassOID(namespaceOID int64, name string) (int64, error) {
 	oid, err := c.q.ClassOID(context.Background(), catalogdb.ClassOIDParams{
 		NamespaceOid: namespaceOID,
@@ -65,12 +79,26 @@ type ClassInfo struct {
 	Name string
 }
 
-func (c *Catalog) TablesInNamespace(namespaceOID int64) ([]ClassInfo, error) {
-	rows, err := c.q.ListTablesInNamespace(context.Background(), namespaceOID)
+// ModelClassesInNamespace lists the relations codegen makes models of: every
+// table and, with views, the views the schema declares, as against the
+// system views a dialect seeds.
+func (c *Catalog) ModelClassesInNamespace(namespaceOID int64, views bool) ([]ClassInfo, error) {
+	ctx := context.Background()
+	var out []ClassInfo
+	if views {
+		rows, err := c.q.ListModelClassesInNamespace(ctx, namespaceOID)
+		if err != nil {
+			return nil, fmt.Errorf("list relations in namespace %d: %w", namespaceOID, err)
+		}
+		for _, r := range rows {
+			out = append(out, ClassInfo{OID: r.Oid, Name: r.Name})
+		}
+		return out, nil
+	}
+	rows, err := c.q.ListTablesInNamespace(ctx, namespaceOID)
 	if err != nil {
 		return nil, fmt.Errorf("list tables in namespace %d: %w", namespaceOID, err)
 	}
-	out := make([]ClassInfo, 0, len(rows))
 	for _, r := range rows {
 		out = append(out, ClassInfo{OID: r.Oid, Name: r.Name})
 	}

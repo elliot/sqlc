@@ -191,6 +191,24 @@ func (q *Queries) CreateConstraint(ctx context.Context, arg CreateConstraintPara
 	return err
 }
 
+const createDeclaredClass = `-- name: CreateDeclaredClass :execlastid
+INSERT INTO sql_class (namespace_oid, name, kind, declared) VALUES (?, ?, ?, 1)
+`
+
+type CreateDeclaredClassParams struct {
+	NamespaceOid int64
+	Name         string
+	Kind         string
+}
+
+func (q *Queries) CreateDeclaredClass(ctx context.Context, arg CreateDeclaredClassParams) (int64, error) {
+	result, err := q.db.ExecContext(ctx, createDeclaredClass, arg.NamespaceOid, arg.Name, arg.Kind)
+	if err != nil {
+		return 0, err
+	}
+	return result.LastInsertId()
+}
+
 const createDialect = `-- name: CreateDialect :execlastid
 
 INSERT INTO sql_dialect (name) VALUES (?)
@@ -715,6 +733,43 @@ func (q *Queries) ListClassColumns(ctx context.Context, classOid int64) ([]ListC
 	for rows.Next() {
 		var i ListClassColumnsRow
 		if err := rows.Scan(&i.ColumnName, &i.TypeOid, &i.NotNull); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listModelClassesInNamespace = `-- name: ListModelClassesInNamespace :many
+SELECT oid, name FROM sql_class
+WHERE namespace_oid = ? AND (kind = 'r' OR declared = 1)
+ORDER BY oid
+`
+
+type ListModelClassesInNamespaceRow struct {
+	Oid  int64
+	Name string
+}
+
+// The relations codegen makes models of: every table, and the views,
+// materialized views and tables created from a query that the schema
+// declares, as against the system views a dialect seeds.
+func (q *Queries) ListModelClassesInNamespace(ctx context.Context, namespaceOid int64) ([]ListModelClassesInNamespaceRow, error) {
+	rows, err := q.db.QueryContext(ctx, listModelClassesInNamespace, namespaceOid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListModelClassesInNamespaceRow
+	for rows.Next() {
+		var i ListModelClassesInNamespaceRow
+		if err := rows.Scan(&i.Oid, &i.Name); err != nil {
 			return nil, err
 		}
 		items = append(items, i)

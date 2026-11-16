@@ -36,6 +36,7 @@ type SqlClass struct {
 	NamespaceOid int64
 	Name         string
 	Kind         string
+	Declared     int64
 }
 
 type SqlConstraint struct {

@@ -91,7 +91,7 @@ func applyView(cat *core.Catalog, rel *ast.RangeVar, aliases *ast.List, query as
 		return fmt.Errorf("view %q: %w", name, err)
 	}
 
-	classOID, err := cat.CreateClass(nsOID, name, "v")
+	classOID, err := cat.CreateDeclaredClass(nsOID, name, "v")
 	if err != nil {
 		return err
 	}
@@ -156,7 +156,7 @@ func applyCreateTable(cat *core.Catalog, stmt *ast.CreateTableStmt) error {
 		}
 		return fmt.Errorf("relation %q already exists", stmt.Name.Name)
 	}
-	classOID, err := cat.CreateClass(nsOID, stmt.Name.Name, "r")
+	classOID, err := cat.CreateDeclaredClass(nsOID, stmt.Name.Name, "r")
 	if err != nil {
 		return err
 	}
