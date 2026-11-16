@@ -14,4 +14,6 @@ type Schedule struct {
 	Busy    pgtype.Multirange[pgtype.Range[pgtype.Timestamptz]]
 	DaysOff pgtype.Multirange[pgtype.Range[pgtype.Date]]
 	Seats   pgtype.Multirange[pgtype.Range[pgtype.Int4]]
+	Ratios  any
+	Labels  any
 }

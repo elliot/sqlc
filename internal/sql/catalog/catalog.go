@@ -18,6 +18,9 @@ type Catalog struct {
 	// the engine's own ranges and those the schema declares, and belongs to
 	// this catalog alone, since a schema's declarations are added to it.
 	RangeElements map[string]string
+	// Multiranges maps a multirange type's name to the name of the range
+	// type it holds, on the same terms as RangeElements.
+	Multiranges map[string]string
 
 	// TODO: un-export
 	Extensions map[string]struct{}

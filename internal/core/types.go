@@ -254,6 +254,19 @@ func (c *Catalog) TypeOIDsInCategory(category string) ([]int64, error) {
 	return oids, nil
 }
 
+// MultirangeOf returns the multirange type that holds a range type, or 0
+// when the catalog has none.
+func (c *Catalog) MultirangeOf(rangeOID int64) (int64, error) {
+	oids, err := c.q.MultirangeOf(context.Background(), nullInt64(rangeOID))
+	if err != nil {
+		return 0, fmt.Errorf("multirange of type %d: %w", rangeOID, err)
+	}
+	if len(oids) == 0 {
+		return 0, nil
+	}
+	return oids[0], nil
+}
+
 // TypeOID returns the family a name refers to: an alias spelling resolves to
 // the type it names.
 func (c *Catalog) TypeOID(name string) (int64, error) {

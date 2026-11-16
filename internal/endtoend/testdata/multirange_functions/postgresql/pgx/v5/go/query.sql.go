@@ -120,7 +120,9 @@ SELECT
     lower(busy)     AS busy_from,
     upper(busy)     AS busy_until,
     lower(days_off) AS first_day_off,
-    upper(seats)    AS max_seat
+    upper(seats)    AS max_seat,
+    lower(ratios)   AS min_ratio,
+    lower(labels)   AS first_label
 FROM schedules
 `
 
@@ -129,6 +131,8 @@ type ListMultirangeBoundsRow struct {
 	BusyUntil   pgtype.Timestamptz
 	FirstDayOff pgtype.Date
 	MaxSeat     pgtype.Int4
+	MinRatio    pgtype.Float8
+	FirstLabel  pgtype.Text
 }
 
 // A bound of a multirange has its ranges' subtype, and is NULL when the
@@ -147,6 +151,8 @@ func (q *Queries) ListMultirangeBounds(ctx context.Context) ([]ListMultirangeBou
 			&i.BusyUntil,
 			&i.FirstDayOff,
 			&i.MaxSeat,
+			&i.MinRatio,
+			&i.FirstLabel,
 		); err != nil {
 			return nil, err
 		}

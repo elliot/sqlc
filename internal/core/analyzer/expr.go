@@ -778,6 +778,9 @@ func opNameFromList(l *ast.List) string {
 // an alias or a domain is looked up along its resolution chain: numeric(10,
 // 2) + numeric(5, 1) resolves on numeric.
 func (a *analyzer) resolveOperator(name string, leftT, rightT exprType) (core.OperatorOverload, error) {
+	if ov, ok := a.rangeOperator(name, leftT, rightT); ok {
+		return ov, nil
+	}
 	leftChain := a.cat.ResolutionChain(leftT.typeOID)
 	rightChain := a.cat.ResolutionChain(rightT.typeOID)
 	all, err := a.cat.FindOperators(name, 0, 0)
@@ -1003,13 +1006,17 @@ func (a *analyzer) returnType(p core.ProcOverload, argTypes []exprType) exprType
 			paramName, _ = a.cat.TypeName(p.ArgTypes[0])
 		}
 		switch {
-		case a.returnsRangeBound(p):
-			// A bound taken from a range, lower(anyrange) returning
-			// anyelement, has the range's subtype.
-			if element, ok := a.rangeElement(arg); ok {
-				return element
+		case isRangePolymorphic(paramName):
+			// A function over a range or multirange returns its subtype,
+			// its range type or its multirange type, as lower, range_merge
+			// and range_agg do.
+			if t, ok := a.rangeResult(p, arg); ok {
+				return t
 			}
-			return exprType{}
+			if a.returnsRangeBound(p) {
+				return exprType{}
+			}
+			return arg
 		case isPolymorphicArray(paramName) && !isPolymorphicArray(name):
 			if element := a.exprOf(arg).Element(); element != nil {
 				return a.lookupType(element)
@@ -1051,37 +1058,146 @@ func (a *analyzer) polymorphicArg(p core.ProcOverload, i int, argTypes []exprTyp
 	return exprType{}, false
 }
 
-// returnsRangeBound reports whether a function takes a range and returns a
-// value of the range's subtype, as lower(anyrange) and upper(anyrange) do.
+// The kinds of polymorphic type the range functions relate: an element,
+// a range of elements and a multirange of ranges.
+const (
+	polyOther = iota
+	polyElement
+	polyRange
+	polyMultirange
+)
+
+// rangePolymorphism classifies a polymorphic type by what it stands for
+// among the range functions' parameters and results.
+func rangePolymorphism(typeName string) int {
+	switch typeName {
+	case "anyelement", "anycompatible", "anynonarray", "anycompatiblenonarray":
+		return polyElement
+	case "anyrange", "anycompatiblerange":
+		return polyRange
+	case "anymultirange", "anycompatiblemultirange":
+		return polyMultirange
+	}
+	return polyOther
+}
+
+// isRangePolymorphic reports whether a parameter type takes a range or a
+// multirange.
+func isRangePolymorphic(typeName string) bool {
+	kind := rangePolymorphism(typeName)
+	return kind == polyRange || kind == polyMultirange
+}
+
+// returnsRangeBound reports whether a function takes a range or multirange
+// and returns a value of its subtype, as lower(anyrange) and
+// upper(anymultirange) do.
 func (a *analyzer) returnsRangeBound(p core.ProcOverload) bool {
 	if len(p.ArgTypes) == 0 {
 		return false
 	}
 	param, err := a.cat.TypeName(p.ArgTypes[0])
-	if err != nil || (param != "anyrange" && param != "anycompatiblerange") {
+	if err != nil || !isRangePolymorphic(param) {
 		return false
 	}
 	ret, err := a.cat.TypeName(p.ReturnTypeOID)
-	return err == nil && (ret == "anyelement" || ret == "anycompatible")
+	return err == nil && rangePolymorphism(ret) == polyElement
 }
 
-// rangeElement is the subtype of a range type: the type of its bounds.
-func (a *analyzer) rangeElement(t exprType) (exprType, bool) {
+// rangeOf reports the range type a range or multirange type holds, and the
+// multirange type itself when it is one: tstzrange holds tstzrange, and
+// tstzmultirange holds tstzrange and is tstzmultirange.
+func (a *analyzer) rangeOf(t exprType) (rangeOID, multirangeOID int64, ok bool) {
 	if t.typeOID == 0 {
-		return exprType{}, false
+		return 0, 0, false
 	}
 	info, err := a.cat.LookupType(t.typeOID)
-	if err != nil || info.Typtype != "r" || info.ElementOID == 0 {
+	if err != nil || info.ElementOID == 0 {
+		return 0, 0, false
+	}
+	switch info.Typtype {
+	case "r":
+		return t.typeOID, 0, true
+	case "m":
+		return info.ElementOID, t.typeOID, true
+	}
+	return 0, 0, false
+}
+
+// rangeResult is the result of a function whose first parameter is a
+// polymorphic range or multirange, for the range or multirange it was
+// called with: its subtype, its range type or its multirange type, as the
+// function's polymorphic result says.
+func (a *analyzer) rangeResult(p core.ProcOverload, arg exprType) (exprType, bool) {
+	if len(p.ArgTypes) == 0 {
 		return exprType{}, false
 	}
-	return exprType{typeOID: info.ElementOID}, true
+	param, err := a.cat.TypeName(p.ArgTypes[0])
+	if err != nil {
+		return exprType{}, false
+	}
+	ret, err := a.cat.TypeName(p.ReturnTypeOID)
+	if err != nil {
+		return exprType{}, false
+	}
+	rangeOID, multirangeOID, ok := a.rangeOf(arg)
+	if !ok || (rangePolymorphism(param) == polyMultirange) != (multirangeOID != 0) {
+		return exprType{}, false
+	}
+	switch rangePolymorphism(ret) {
+	case polyElement:
+		info, err := a.cat.LookupType(rangeOID)
+		if err != nil || info.ElementOID == 0 {
+			return exprType{}, false
+		}
+		return exprType{typeOID: info.ElementOID}, true
+	case polyRange:
+		return exprType{typeOID: rangeOID}, true
+	case polyMultirange:
+		if multirangeOID == 0 {
+			multirangeOID, err = a.cat.MultirangeOf(rangeOID)
+			if err != nil || multirangeOID == 0 {
+				return exprType{}, false
+			}
+		}
+		return exprType{typeOID: multirangeOID}, true
+	}
+	return exprType{}, false
+}
+
+// rangeOperator types an operator applied to a range or multirange, which
+// no dialect seed lists, over every range type a schema may declare: the
+// operators that compare ranges, or a range and an element, are
+// predicates, and union, difference and intersection return the operands'
+// type, a multirange when either is one.
+func (a *analyzer) rangeOperator(name string, leftT, rightT exprType) (core.OperatorOverload, bool) {
+	_, leftMulti, leftOK := a.rangeOf(leftT)
+	_, rightMulti, rightOK := a.rangeOf(rightT)
+	if !leftOK && !rightOK {
+		return core.OperatorOverload{}, false
+	}
+	switch name {
+	case "&&", "@>", "<@", "-|-", "<<", ">>", "&<", "&>":
+		boolOID, err := a.cat.BoolTypeOID()
+		if err != nil {
+			return core.OperatorOverload{}, false
+		}
+		return core.OperatorOverload{Name: name, ResultTypeOID: boolOID}, true
+	case "+", "-", "*":
+		result := rightT.typeOID
+		if leftMulti != 0 || (leftOK && rightMulti == 0) {
+			result = leftT.typeOID
+		}
+		return core.OperatorOverload{Name: name, ResultTypeOID: result}, true
+	}
+	return core.OperatorOverload{}, false
 }
 
 // polymorphicScore is how well a polymorphic parameter takes an argument,
-// on pickOverload's scale. A range parameter takes only a range, and takes
-// one as closely as a match on the argument's family does, so lower(range)
-// wins over lower(anymultirange) and loses to lower(text) for a text. Any
-// other polymorphic parameter takes anything, as loosely as possible.
+// on pickOverload's scale. A range parameter takes only a range and a
+// multirange parameter only a multirange, each as closely as a match on the
+// argument's family does, so lower(range) wins over lower(anymultirange)
+// and loses to lower(text) for a text. Any other polymorphic parameter
+// takes anything, as loosely as possible.
 func (a *analyzer) polymorphicScore(param, arg int64) int {
 	if arg == 0 {
 		return 1
@@ -1090,17 +1206,18 @@ func (a *analyzer) polymorphicScore(param, arg int64) int {
 	if err != nil {
 		return 1
 	}
-	_, isRange := a.rangeElement(exprType{typeOID: arg})
-	switch name {
-	case "anyrange", "anycompatiblerange":
-		if isRange {
+	_, multirangeOID, rangeish := a.rangeOf(exprType{typeOID: arg})
+	switch rangePolymorphism(name) {
+	case polyRange:
+		if rangeish && multirangeOID == 0 {
 			return 2
 		}
 		return 0
-	case "anymultirange":
-		if isRange {
-			return 0
+	case polyMultirange:
+		if multirangeOID != 0 {
+			return 2
 		}
+		return 0
 	}
 	return 1
 }
@@ -1149,7 +1266,7 @@ func isPolymorphic(typeName string) bool {
 	switch typeName {
 	case "any", "anyelement", "anyarray", "anynonarray", "anyenum", "anyrange",
 		"anymultirange", "anycompatible", "anycompatiblearray",
-		"anycompatiblenonarray", "anycompatiblerange":
+		"anycompatiblenonarray", "anycompatiblerange", "anycompatiblemultirange":
 		return true
 	}
 	return false

@@ -92,43 +92,78 @@ func (c *Catalog) createEnum(stmt *ast.CreateEnumStmt) error {
 	return nil
 }
 
-// createRange records the subtype of a range type a schema declares, which
-// is all this catalog keeps of one: the type of a bound taken from it. The
-// range is known by the name the schema gave it and, in the default schema,
-// by its bare name as well, the two ways a column may spell it.
+// createRange records the subtype of a range type a schema declares, and
+// the multirange PostgreSQL creates along with it, which is all this catalog
+// keeps of either: what a bound or a range taken from them is. Each is known
+// by the name the schema gave it and, in the default schema, by its bare
+// name as well, the two ways a column may spell it.
 func (c *Catalog) createRange(stmt *ast.CreateRangeStmt) error {
 	names := stringSlice(stmt.TypeName)
 	if len(names) == 0 {
 		return nil
 	}
 	var element string
+	var multirange []string
 	for _, item := range listItems(stmt.Params) {
 		def, ok := item.(*ast.DefElem)
-		if !ok || def.Defname == nil || *def.Defname != "subtype" {
+		if !ok || def.Defname == nil {
 			continue
 		}
-		if tn, ok := def.Arg.(*ast.TypeName); ok {
+		tn, ok := def.Arg.(*ast.TypeName)
+		if !ok {
+			continue
+		}
+		switch *def.Defname {
+		case "subtype":
 			element = strings.Join(stringSlice(tn.Names), ".")
+		case "multirange_type_name":
+			multirange = stringSlice(tn.Names)
 		}
 	}
 	if element == "" {
 		return nil
 	}
+	if multirange == nil {
+		multirange = append(append([]string{}, names[:len(names)-1]...), multirangeName(names[len(names)-1]))
+	}
 	if c.RangeElements == nil {
 		c.RangeElements = map[string]string{}
 	}
-	name := strings.ToLower(names[len(names)-1])
-	switch {
-	case len(names) == 1:
+	if c.Multiranges == nil {
+		c.Multiranges = map[string]string{}
+	}
+	rangeName := strings.ToLower(strings.Join(names, "."))
+	for _, name := range c.typeNames(names) {
 		c.RangeElements[name] = element
-		c.RangeElements[strings.ToLower(c.DefaultSchema)+"."+name] = element
-	case strings.EqualFold(names[0], c.DefaultSchema):
-		c.RangeElements[name] = element
-		fallthrough
-	default:
-		c.RangeElements[strings.ToLower(strings.Join(names, "."))] = element
+	}
+	for _, name := range c.typeNames(multirange) {
+		c.Multiranges[name] = rangeName
 	}
 	return nil
+}
+
+// typeNames is the names a type the schema declares is known by: the name
+// as written and, in the default schema, both its bare and its qualified
+// name.
+func (c *Catalog) typeNames(names []string) []string {
+	name := strings.ToLower(names[len(names)-1])
+	qualified := strings.ToLower(c.DefaultSchema) + "." + name
+	switch {
+	case len(names) == 1, strings.EqualFold(names[0], c.DefaultSchema):
+		return []string{name, qualified}
+	default:
+		return []string{strings.ToLower(strings.Join(names, "."))}
+	}
+}
+
+// multirangeName is the name PostgreSQL gives the multirange of a range a
+// schema declares without naming one: the range's name with its first
+// "range" replaced by "multirange", or else with "_multirange" appended.
+func multirangeName(rangeName string) string {
+	if strings.Contains(rangeName, "range") {
+		return strings.Replace(rangeName, "range", "multirange", 1)
+	}
+	return rangeName + "_multirange"
 }
 
 func listItems(list *ast.List) []ast.Node {

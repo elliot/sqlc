@@ -695,8 +695,16 @@ and details settled on the way:
   recorded the way `CREATE TYPE ... AS RANGE` records one, typtype `r` with
   the subtype in `element_oid`, so `lower(tstzrange)`, whose parameter is
   `anyrange` and whose result is `anyelement`, reports a `timestamp with time
-  zone`, nullable since an empty or unbounded range has no bound. The legacy
-  catalog reads the same list through `seed.RangeElements`.
+  zone`, nullable since an empty or unbounded range has no bound. A family
+  may instead name a `range`, which makes it that range's multirange,
+  typtype `m` with the range in `element_oid`, as `pg_range` pairs them:
+  `range_merge(tstzmultirange)` reports a `tstzrange` and
+  `range_agg(tstzrange)` a `tstzmultirange`. `CREATE TYPE ... AS RANGE`
+  creates the multirange along with the range, under PostgreSQL's name for
+  it or the `multirange_type_name` it gives. The operators over ranges and
+  multiranges are typed by the analyzer rather than listed per type, so a
+  declared range has them too. The legacy catalog reads the same lists
+  through `seed.Ranges`.
 - SQLite's `dialect.json` says `"alias": "base"`, which makes each alias in
   its `types.jsonl` a type of its own standing on the type it aliases,
   rather than another spelling of it.

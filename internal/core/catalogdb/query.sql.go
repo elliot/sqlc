@@ -947,6 +947,37 @@ func (q *Queries) MaxAttributeNum(ctx context.Context, classOid int64) (int64, e
 	return num, err
 }
 
+const multirangeOf = `-- name: MultirangeOf :many
+SELECT oid FROM sql_type
+WHERE typtype = 'm' AND element_oid = ?
+ORDER BY oid
+`
+
+// The multirange types that hold a range type: one, as PostgreSQL pairs
+// each range with its multirange.
+func (q *Queries) MultirangeOf(ctx context.Context, elementOid sql.NullInt64) ([]int64, error) {
+	rows, err := q.db.QueryContext(ctx, multirangeOf, elementOid)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int64
+	for rows.Next() {
+		var oid int64
+		if err := rows.Scan(&oid); err != nil {
+			return nil, err
+		}
+		items = append(items, oid)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const namespaceOID = `-- name: NamespaceOID :one
 SELECT oid FROM sql_namespace WHERE name = ?
 `

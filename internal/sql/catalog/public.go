@@ -143,9 +143,9 @@ func (c *Catalog) ResolveFuncCallWithArgTypes(call *ast.FuncCall, argTypes []str
 // argTypesScore is how well a function's parameters take arguments of the
 // given types. It weighs only polymorphic range and multirange parameters,
 // whose rules hold without knowing the engine's casts: a range parameter
-// takes a range and nothing else, and a multirange parameter takes nothing
-// known to be something else. Every other parameter is left to overload
-// order, as it always has been.
+// takes a range and nothing else, and a multirange parameter a multirange
+// and nothing else. Every other parameter is left to overload order, as it
+// always has been.
 func (c *Catalog) argTypesScore(params []*Argument, argTypes []string) int {
 	score := 0
 	for i, arg := range argTypes {
@@ -162,7 +162,9 @@ func (c *Catalog) argTypesScore(params []*Argument, argTypes []string) int {
 				score -= 1
 			}
 		case param == "anymultirange" || param == "anycompatiblemultirange":
-			if !strings.HasSuffix(normalizeTypeName(arg), "multirange") {
+			if _, ok := c.MultirangeRange(arg); ok {
+				score += 2
+			} else {
 				score -= 1
 			}
 		}
@@ -175,6 +177,29 @@ func (c *Catalog) argTypesScore(params []*Argument, argTypes []string) int {
 func (c *Catalog) RangeElement(typeName string) (string, bool) {
 	element, ok := c.RangeElements[normalizeTypeName(typeName)]
 	return element, ok
+}
+
+// MultirangeRange reports the range type a multirange type holds, when
+// typeName names a multirange type the engine knows.
+func (c *Catalog) MultirangeRange(typeName string) (string, bool) {
+	rng, ok := c.Multiranges[normalizeTypeName(typeName)]
+	return rng, ok
+}
+
+// RangeMultirange reports the multirange type that holds a range type, by
+// the shortest name it is known by.
+func (c *Catalog) RangeMultirange(rangeName string) (string, bool) {
+	want := normalizeTypeName(rangeName)
+	var best string
+	for name, rng := range c.Multiranges {
+		if normalizeTypeName(rng) != want {
+			continue
+		}
+		if best == "" || len(name) < len(best) || (len(name) == len(best) && name < best) {
+			best = name
+		}
+	}
+	return best, best != ""
 }
 
 // normalizeTypeName spells a built-in type name the way an engine's seed

@@ -5,7 +5,9 @@ SELECT
     lower(busy)     AS busy_from,
     upper(busy)     AS busy_until,
     lower(days_off) AS first_day_off,
-    upper(seats)    AS max_seat
+    upper(seats)    AS max_seat,
+    lower(ratios)   AS min_ratio,
+    lower(labels)   AS first_label
 FROM schedules;
 
 -- name: ListHulls :many

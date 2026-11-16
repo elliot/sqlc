@@ -171,6 +171,11 @@ type Type struct {
 	// with time zone. The catalog records it the way it records a range a
 	// schema declares with CREATE TYPE ... AS RANGE.
 	Element string `json:"element,omitempty"`
+	// Range makes the type the multirange of the range type it names, which
+	// must be listed before it: a tstzmultirange holds tstzranges. The
+	// catalog records the range as what the multirange holds, the way
+	// pg_range pairs the two.
+	Range string `json:"range,omitempty"`
 }
 
 // Operator is a single operator overload.
@@ -438,28 +443,36 @@ func Functions(fsys fs.FS, dir string) ([]*catalog.Function, error) {
 	return out, nil
 }
 
-// RangeElements maps each range type the dialect defines, by its name and
-// its aliases, to the name of its subtype, for the legacy catalog: it holds
-// types by name rather than as catalog rows.
-func RangeElements(fsys fs.FS, dir string) (map[string]string, error) {
+// RangeTypes is what the legacy catalog needs of a dialect's range and
+// multirange types, which it holds by name rather than as catalog rows.
+type RangeTypes struct {
+	// Elements maps each range type, by its name and its aliases, to the
+	// name of its subtype.
+	Elements map[string]string
+	// Multiranges maps each multirange type, by its name and its aliases,
+	// to the name of the range type it holds.
+	Multiranges map[string]string
+}
+
+// Ranges reads the range and multirange types the dialect defines.
+func Ranges(fsys fs.FS, dir string) (RangeTypes, error) {
+	out := RangeTypes{Elements: map[string]string{}, Multiranges: map[string]string{}}
 	sub, err := fs.Sub(fsys, dir)
 	if err != nil {
-		return nil, fmt.Errorf("seed: %s: %w", dir, err)
+		return out, fmt.Errorf("seed: %s: %w", dir, err)
 	}
-	out := map[string]string{}
 	err = stream(sub, TypesFile, func(t Type) error {
-		if t.Element == "" {
-			return nil
-		}
 		for _, name := range append([]string{t.Name}, t.Aliases...) {
-			out[strings.ToLower(name)] = t.Element
+			if t.Element != "" {
+				out.Elements[strings.ToLower(name)] = t.Element
+			}
+			if t.Range != "" {
+				out.Multiranges[strings.ToLower(name)] = t.Range
+			}
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
+	return out, err
 }
 
 // Relations streams the relations a dialect ships with in the named schema
@@ -581,6 +594,14 @@ func (b *builder) addType(t Type) error {
 			return fmt.Errorf("type %q: element %q is not a type listed before it", t.Name, t.Element)
 		}
 		spec.Typtype = "r"
+		spec.ElementOID = oid
+	}
+	if t.Range != "" {
+		oid, ok := b.oids[strings.ToLower(t.Range)]
+		if !ok {
+			return fmt.Errorf("type %q: range %q is not a type listed before it", t.Name, t.Range)
+		}
+		spec.Typtype = "m"
 		spec.ElementOID = oid
 	}
 	oid, err := b.createType(spec)

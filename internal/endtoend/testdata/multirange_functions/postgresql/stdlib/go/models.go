@@ -10,4 +10,6 @@ type Schedule struct {
 	Busy    any
 	DaysOff any
 	Seats   any
+	Ratios  any
+	Labels  any
 }

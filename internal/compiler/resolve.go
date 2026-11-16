@@ -112,6 +112,50 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 		})
 	}
 
+	// ranges types the range expressions a parameter may be compared with,
+	// resolving a column the way the parameters below are resolved.
+	ranges := rangeTyper{cat: c, column: func(ref *ast.ColumnRef) string {
+		items := stringSlice(ref.Fields)
+		var key, alias string
+		switch len(items) {
+		case 1:
+			key = items[0]
+		case 2:
+			alias, key = items[0], items[1]
+		case 3:
+			alias, key = items[1], items[2]
+		default:
+			return ""
+		}
+		search := tables
+		if alias != "" {
+			search = nil
+			if original, ok := aliasMap[alias]; ok {
+				search = []*ast.TableName{original}
+			} else {
+				for _, fqn := range tables {
+					if fqn.Name == alias {
+						search = append(search, fqn)
+					}
+				}
+			}
+		}
+		var found []*catalog.Column
+		for _, table := range search {
+			schema := table.Schema
+			if schema == "" {
+				schema = c.DefaultSchema
+			}
+			if col, ok := typeMap[schema][table.Name][key]; ok {
+				found = append(found, col)
+			}
+		}
+		if len(found) != 1 || found[0].IsArray {
+			return ""
+		}
+		return dataType(&found[0].Type)
+	}}
+
 	for _, ref := range args {
 		switch n := ref.parent.(type) {
 
@@ -142,6 +186,19 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 			})
 
 		case *ast.A_Expr:
+			// A parameter compared with a range expression takes its type,
+			// and may be NULL when the expression may: lower(during) >= $1
+			// compares a bound, which has the range's subtype. The rest of
+			// the parameter, its name above all, comes from the column the
+			// expression is over, as below.
+			var compared rangeType
+			if other := comparedWith(n, ref.ref); other != nil {
+				switch other.(type) {
+				case *ast.FuncCall, *ast.A_Expr:
+					compared = ranges.typeOf(other)
+				}
+			}
+			before := len(a)
 			// TODO: While this works for a wide range of simple expressions,
 			// more complicated expressions will cause this logic to fail.
 			list := astutils.Search(n.Lexpr, func(node ast.Node) bool {
@@ -263,6 +320,20 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 						Message:  fmt.Sprintf("column reference %q is ambiguous", key),
 						Location: node.Location,
 					}
+				}
+			}
+			if compared.name != "" && len(a) > before {
+				// The parameter no longer stands for the column, so a
+				// column's override must not apply to it.
+				param := a[len(a)-1].Column
+				param.DataType = compared.name
+				param.IsArray = false
+				param.ArrayDims = 0
+				param.Length = nil
+				param.Table = nil
+				param.OriginalName = ""
+				if compared.nullable {
+					param.NotNull = false
 				}
 			}
 
@@ -635,4 +706,16 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 		}
 	}
 	return a, nil
+}
+
+// comparedWith is the operand an operator compares a parameter with: the
+// other one, when the parameter is itself an operand of the operator.
+func comparedWith(e *ast.A_Expr, p *ast.ParamRef) ast.Node {
+	switch {
+	case e.Rexpr == ast.Node(p):
+		return e.Lexpr
+	case e.Lexpr == ast.Node(p):
+		return e.Rexpr
+	}
+	return nil
 }

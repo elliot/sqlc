@@ -44,5 +44,11 @@
 {"name": "tsrange", "category": "U", "element": "timestamp without time zone"}
 {"name": "tstzrange", "category": "U", "element": "timestamp with time zone"}
 {"name": "daterange", "category": "U", "element": "date"}
+{"name": "int4multirange", "category": "U", "range": "int4range"}
+{"name": "int8multirange", "category": "U", "range": "int8range"}
+{"name": "nummultirange", "category": "U", "range": "numrange"}
+{"name": "tsmultirange", "category": "U", "range": "tsrange"}
+{"name": "tstzmultirange", "category": "U", "range": "tstzrange"}
+{"name": "datemultirange", "category": "U", "range": "daterange"}
 {"name": "anyarray", "category": "A"}
 {"name": "array", "category": "A"}

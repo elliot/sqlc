@@ -453,23 +453,55 @@ func applyCreateRange(cat *core.Catalog, stmt *ast.CreateRangeStmt) error {
 		return nil
 	}
 	spec := core.TypeSpec{Name: name, Typtype: "r", Category: "R"}
+	multirange := multirangeName(name)
 	for _, item := range listItems(stmt.Params) {
 		def, ok := item.(*ast.DefElem)
-		if !ok || def.Defname == nil || *def.Defname != "subtype" {
+		if !ok || def.Defname == nil {
 			continue
 		}
-		tn, ok := def.Arg.(*ast.TypeName)
-		if !ok {
-			continue
+		switch *def.Defname {
+		case "subtype":
+			tn, ok := def.Arg.(*ast.TypeName)
+			if !ok {
+				continue
+			}
+			oid, err := cat.ResolveType(tn)
+			if err != nil {
+				return fmt.Errorf("range %q: %w", name, err)
+			}
+			spec.ElementOID = oid
+		case "multirange_type_name":
+			if tn, ok := def.Arg.(*ast.TypeName); ok {
+				multirange = strings.ToLower(strings.Join(listStrings(tn.Names), "."))
+			}
 		}
-		oid, err := cat.ResolveType(tn)
-		if err != nil {
-			return fmt.Errorf("range %q: %w", name, err)
-		}
-		spec.ElementOID = oid
 	}
-	_, err := cat.CreateTypeWithArgs(spec, nil)
+	rangeOID, err := cat.CreateTypeWithArgs(spec, nil)
+	if err != nil {
+		return err
+	}
+	// PostgreSQL creates the range's multirange along with it.
+	if multirange == "" || cat.TypeDeclared(multirange) {
+		return nil
+	}
+	_, err = cat.CreateTypeWithArgs(core.TypeSpec{
+		Name: multirange, Typtype: "m", Category: "R", ElementOID: rangeOID,
+	}, nil)
 	return err
+}
+
+// multirangeName is the name PostgreSQL gives the multirange of a range a
+// schema declares without naming one: the range's name with its first
+// "range" replaced by "multirange", or else with "_multirange" appended.
+func multirangeName(rangeName string) string {
+	schema, name := "", rangeName
+	if i := strings.LastIndex(rangeName, "."); i >= 0 {
+		schema, name = rangeName[:i+1], rangeName[i+1:]
+	}
+	if strings.Contains(name, "range") {
+		return schema + strings.Replace(name, "range", "multirange", 1)
+	}
+	return schema + name + "_multirange"
 }
 
 // declaredTypeName is the name a CREATE TYPE gives, qualified by its schema

@@ -105,6 +105,13 @@ WHERE dialect_oid = ? AND category = ?
   AND family_oid IS NULL AND canonical_oid IS NULL
 ORDER BY oid;
 
+-- name: MultirangeOf :many
+-- The multirange types that hold a range type: one, as PostgreSQL pairs
+-- each range with its multirange.
+SELECT oid FROM sql_type
+WHERE typtype = 'm' AND element_oid = ?
+ORDER BY oid;
+
 -- name: LookupType :one
 SELECT oid, namespace_oid, name, expr, category, typtype, preferred,
        family_oid, element_oid, base_oid, canonical_oid, not_null
