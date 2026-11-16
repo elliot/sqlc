@@ -91,6 +91,30 @@ func (q *Queries) ListBookingsDuring(ctx context.Context, during pgtype.Range[pg
 	return items, nil
 }
 
+const listRoomClosures = `-- name: ListRoomClosures :many
+SELECT room_id, valid_at, reason FROM room_closures WHERE room_id = $1
+`
+
+func (q *Queries) ListRoomClosures(ctx context.Context, roomID int32) ([]RoomClosure, error) {
+	rows, err := q.db.Query(ctx, listRoomClosures, roomID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []RoomClosure
+	for rows.Next() {
+		var i RoomClosure
+		if err := rows.Scan(&i.RoomID, &i.ValidAt, &i.Reason); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listRoomCodes = `-- name: ListRoomCodes :many
 SELECT code, room_id, valid_at FROM room_codes WHERE room_id = $1
 `

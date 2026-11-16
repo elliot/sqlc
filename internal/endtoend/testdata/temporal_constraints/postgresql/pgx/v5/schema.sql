@@ -41,3 +41,14 @@ ALTER TABLE room_rates
 ALTER TABLE room_rates
     ADD CONSTRAINT room_rates_room_fk
     FOREIGN KEY (room_id, PERIOD valid_at) REFERENCES rooms (id, PERIOD valid_at);
+
+-- A temporal primary key added by ALTER TABLE makes its columns NOT NULL as
+-- well, which is how a migration usually introduces one.
+CREATE TABLE room_closures (
+    room_id  integer,
+    valid_at tstzrange,
+    reason   text
+);
+
+ALTER TABLE room_closures
+    ADD CONSTRAINT room_closures_pkey PRIMARY KEY (room_id, valid_at WITHOUT OVERLAPS);

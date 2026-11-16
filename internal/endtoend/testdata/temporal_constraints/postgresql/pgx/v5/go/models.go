@@ -21,6 +21,12 @@ type Room struct {
 	Name    string
 }
 
+type RoomClosure struct {
+	RoomID  int32
+	ValidAt pgtype.Range[pgtype.Timestamptz]
+	Reason  pgtype.Text
+}
+
 type RoomCode struct {
 	Code    pgtype.Text
 	RoomID  int32

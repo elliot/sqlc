@@ -18,3 +18,6 @@ WHERE b.valid_at && sqlc.arg(during)::tstzrange;
 
 -- name: SetRoomRate :exec
 INSERT INTO room_rates (room_id, valid_at, amount) VALUES ($1, $2, $3);
+
+-- name: ListRoomClosures :many
+SELECT * FROM room_closures WHERE room_id = $1;
