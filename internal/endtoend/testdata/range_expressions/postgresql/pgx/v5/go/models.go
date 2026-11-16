@@ -13,4 +13,5 @@ type Reservation struct {
 	During  pgtype.Range[pgtype.Timestamptz]
 	Blocked pgtype.Range[pgtype.Timestamptz]
 	Days    pgtype.Range[pgtype.Date]
+	Hold    pgtype.Range[pgtype.Timestamptz]
 }

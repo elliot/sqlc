@@ -9,4 +9,5 @@ type Reservation struct {
 	During  any
 	Blocked any
 	Days    any
+	Hold    any
 }

@@ -74,6 +74,77 @@ func (q *Queries) ListByFirstDay(ctx context.Context, firstDay sql.NullTime) ([]
 	return items, nil
 }
 
+const listByFirstDays = `-- name: ListByFirstDays :many
+SELECT id FROM reservations
+WHERE lower(days) IN ($1, $2)
+`
+
+type ListByFirstDaysParams struct {
+	FirstDay sql.NullTime
+	OtherDay sql.NullTime
+}
+
+func (q *Queries) ListByFirstDays(ctx context.Context, arg ListByFirstDaysParams) ([]int32, error) {
+	rows, err := q.db.QueryContext(ctx, listByFirstDays, arg.FirstDay, arg.OtherDay)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int32
+	for rows.Next() {
+		var id int32
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listComputedBounds = `-- name: ListComputedBounds :many
+SELECT
+    upper(tstzrange(lower(during), now()))                 AS span_end,
+    lower(coalesce(hold, during))                          AS effective_start,
+    lower(CASE WHEN id > 0 THEN during ELSE blocked END)   AS chosen_start
+FROM reservations
+`
+
+type ListComputedBoundsRow struct {
+	SpanEnd        sql.NullTime
+	EffectiveStart sql.NullTime
+	ChosenStart    sql.NullTime
+}
+
+// A range a function builds, or COALESCE or CASE chooses, is typed as well.
+func (q *Queries) ListComputedBounds(ctx context.Context) ([]ListComputedBoundsRow, error) {
+	rows, err := q.db.QueryContext(ctx, listComputedBounds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []ListComputedBoundsRow
+	for rows.Next() {
+		var i ListComputedBoundsRow
+		if err := rows.Scan(&i.SpanEnd, &i.EffectiveStart, &i.ChosenStart); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listContaining = `-- name: ListContaining :many
 SELECT id FROM reservations WHERE during @> $1::timestamptz
 `
@@ -222,6 +293,41 @@ func (q *Queries) ListRangePredicates(ctx context.Context) ([]ListRangePredicate
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Close(); err != nil {
+		return nil, err
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listStartingBetween = `-- name: ListStartingBetween :many
+SELECT id FROM reservations
+WHERE lower(during) BETWEEN $1 AND $2
+`
+
+type ListStartingBetweenParams struct {
+	FromTime sql.NullTime
+	ToTime   sql.NullTime
+}
+
+// A parameter in a BETWEEN or an IN list compared with a bound has the
+// range's subtype, and is nullable as the bound is.
+func (q *Queries) ListStartingBetween(ctx context.Context, arg ListStartingBetweenParams) ([]int32, error) {
+	rows, err := q.db.QueryContext(ctx, listStartingBetween, arg.FromTime, arg.ToTime)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var items []int32
+	for rows.Next() {
+		var id int32
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		items = append(items, id)
 	}
 	if err := rows.Close(); err != nil {
 		return nil, err

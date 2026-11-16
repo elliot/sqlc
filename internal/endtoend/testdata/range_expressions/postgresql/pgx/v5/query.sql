@@ -39,3 +39,21 @@ SELECT id FROM reservations WHERE during && sqlc.arg(window);
 
 -- name: ListContaining :many
 SELECT id FROM reservations WHERE during @> sqlc.arg(at)::timestamptz;
+
+-- name: ListComputedBounds :many
+-- A range a function builds, or COALESCE or CASE chooses, is typed as well.
+SELECT
+    upper(tstzrange(lower(during), now()))                 AS span_end,
+    lower(coalesce(hold, during))                          AS effective_start,
+    lower(CASE WHEN id > 0 THEN during ELSE blocked END)   AS chosen_start
+FROM reservations;
+
+-- name: ListStartingBetween :many
+-- A parameter in a BETWEEN or an IN list compared with a bound has the
+-- range's subtype, and is nullable as the bound is.
+SELECT id FROM reservations
+WHERE lower(during) BETWEEN sqlc.arg(from_time) AND sqlc.arg(to_time);
+
+-- name: ListByFirstDays :many
+SELECT id FROM reservations
+WHERE lower(days) IN (sqlc.arg(first_day), sqlc.arg(other_day));
