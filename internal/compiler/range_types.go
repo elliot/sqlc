@@ -50,13 +50,56 @@ func (r rangeTyper) typeOf(n ast.Node) rangeType {
 		if err != nil {
 			return rangeType{}
 		}
-		t, _ := r.funcResult(fun, argTypes)
-		return t
+		if t, ok := r.funcResult(fun, argTypes); ok {
+			return t
+		}
+		// A function that names its result type, as the tstzrange
+		// constructor does, returns that type whatever it is called with.
+		if fun.ReturnType != nil && !isPseudoType(fun.ReturnType.Name) {
+			return rangeType{name: dataType(fun.ReturnType)}
+		}
+		return rangeType{}
 	case *ast.A_Expr:
 		t, _ := r.operatorResult(astutils.Join(n.Name, ""), r.typeOf(n.Lexpr).name, r.typeOf(n.Rexpr).name)
 		return t
+	case *ast.CoalesceExpr:
+		// The alternatives of a COALESCE share a type, which any of them
+		// may say.
+		if n.Args != nil {
+			for _, arg := range n.Args.Items {
+				if t := r.typeOf(arg); t.name != "" {
+					return rangeType{name: t.name, nullable: t.nullable}
+				}
+			}
+		}
+	case *ast.CaseExpr:
+		// So do the results of a CASE, the default among them.
+		results := []ast.Node{n.Defresult}
+		if n.Args != nil {
+			for _, item := range n.Args.Items {
+				if when, ok := item.(*ast.CaseWhen); ok {
+					results = append(results, when.Result)
+				}
+			}
+		}
+		for _, result := range results {
+			if result == nil {
+				continue
+			}
+			if t := r.typeOf(result); t.name != "" {
+				return rangeType{name: t.name}
+			}
+		}
 	}
 	return rangeType{}
+}
+
+// isPseudoType reports whether a function's declared result says nothing
+// of the type it returns: a polymorphic type, or no type at all.
+func isPseudoType(typeName string) bool {
+	name := strings.ToLower(typeName)
+	return strings.HasPrefix(name, "any") || name == "void" || name == "record" ||
+		name == "trigger" || name == "event_trigger" || name == "internal" || name == "unknown"
 }
 
 // argTypes is the type of each positional argument of a call, as far as the

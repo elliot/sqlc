@@ -156,6 +156,54 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 		return dataType(&found[0].Type)
 	}}
 
+	// rangeParam is the parameter a range expression gives a parameter
+	// compared with it, as an operand, a BETWEEN bound or an IN item: it
+	// takes the expression's type and may be NULL when the expression may,
+	// as lower(during) >= $1 compares a bound, which has the range's subtype
+	// and is NULL for an empty or unbounded range. Unnamed, it is named after
+	// the first column the expression is over. It stands for no column, so
+	// no column's override applies to it. ok is false for any other kind of
+	// expression, which the rules below type.
+	rangeParam := func(ref paramRef, expr ast.Node, prefix string) (Parameter, bool) {
+		switch expr.(type) {
+		case *ast.FuncCall, *ast.A_Expr, *ast.CoalesceExpr, *ast.CaseExpr:
+		default:
+			return Parameter{}, false
+		}
+		t := ranges.typeOf(expr)
+		if t.name == "" {
+			return Parameter{}, false
+		}
+		var key string
+		columns := astutils.Search(expr, func(node ast.Node) bool {
+			_, ok := node.(*ast.ColumnRef)
+			return ok
+		})
+		if len(columns.Items) > 0 {
+			if fields := stringSlice(columns.Items[0].(*ast.ColumnRef).Fields); len(fields) > 0 {
+				key = fields[len(fields)-1]
+			}
+		}
+		if ref.name != "" {
+			key = ref.name
+		}
+		p, isNamed := params.FetchMerge(ref.ref.Number, named.NewInferredParam(key, !t.nullable))
+		name := p.Name()
+		if !isNamed {
+			name = prefix + name
+		}
+		return Parameter{
+			Number: ref.ref.Number,
+			Column: &Column{
+				Name:         name,
+				DataType:     t.name,
+				NotNull:      p.NotNull() && !t.nullable,
+				IsNamedParam: isNamed,
+				IsSqlcSlice:  p.IsSqlcSlice(),
+			},
+		}, true
+	}
+
 	for _, ref := range args {
 		switch n := ref.parent.(type) {
 
@@ -186,19 +234,10 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 			})
 
 		case *ast.A_Expr:
-			// A parameter compared with a range expression takes its type,
-			// and may be NULL when the expression may: lower(during) >= $1
-			// compares a bound, which has the range's subtype. The rest of
-			// the parameter, its name above all, comes from the column the
-			// expression is over, as below.
-			var compared rangeType
-			if other := comparedWith(n, ref.ref); other != nil {
-				switch other.(type) {
-				case *ast.FuncCall, *ast.A_Expr:
-					compared = ranges.typeOf(other)
-				}
+			if p, ok := rangeParam(ref, comparedWith(n, ref.ref), betweenPrefix(n, ref.ref)); ok {
+				a = append(a, p)
+				continue
 			}
-			before := len(a)
 			// TODO: While this works for a wide range of simple expressions,
 			// more complicated expressions will cause this logic to fail.
 			list := astutils.Search(n.Lexpr, func(node ast.Node) bool {
@@ -322,24 +361,21 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 					}
 				}
 			}
-			if compared.name != "" && len(a) > before {
-				// The parameter no longer stands for the column, so a
-				// column's override must not apply to it.
-				param := a[len(a)-1].Column
-				param.DataType = compared.name
-				param.IsArray = false
-				param.ArrayDims = 0
-				param.Length = nil
-				param.Table = nil
-				param.OriginalName = ""
-				if compared.nullable {
-					param.NotNull = false
-				}
-			}
 
 		case *ast.BetweenExpr:
 			if n == nil || n.Expr == nil || n.Left == nil || n.Right == nil {
 				fmt.Println("ast.BetweenExpr is nil")
+				continue
+			}
+
+			prefix := ""
+			if ref.ref == n.Left {
+				prefix = "from_"
+			} else if ref.ref == n.Right {
+				prefix = "to_"
+			}
+			if p, ok := rangeParam(ref, n.Expr, prefix); ok {
+				a = append(a, p)
 				continue
 			}
 
@@ -603,6 +639,11 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 				continue
 			}
 
+			if p, ok := rangeParam(ref, n.Expr, ""); ok {
+				a = append(a, p)
+				continue
+			}
+
 			number := 0
 			if pr, ok := n.List[0].(*ast.ParamRef); ok {
 				number = pr.Number
@@ -709,7 +750,8 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 }
 
 // comparedWith is the operand an operator compares a parameter with: the
-// other one, when the parameter is itself an operand of the operator.
+// other one, when the parameter is itself an operand of the operator or an
+// item of the list on its right, as in x BETWEEN $1 AND $2 and x IN ($1, $2).
 func comparedWith(e *ast.A_Expr, p *ast.ParamRef) ast.Node {
 	switch {
 	case e.Rexpr == ast.Node(p):
@@ -717,5 +759,34 @@ func comparedWith(e *ast.A_Expr, p *ast.ParamRef) ast.Node {
 	case e.Lexpr == ast.Node(p):
 		return e.Rexpr
 	}
+	if list, ok := e.Rexpr.(*ast.List); ok {
+		for _, item := range list.Items {
+			if item == ast.Node(p) {
+				return e.Lexpr
+			}
+		}
+	}
 	return nil
+}
+
+// betweenPrefix is what an unnamed parameter's name starts with as a bound
+// of a BETWEEN, as for a BetweenExpr: from_ for the lower, to_ for the upper.
+func betweenPrefix(e *ast.A_Expr, p *ast.ParamRef) string {
+	switch e.Kind {
+	case ast.A_Expr_Kind_BETWEEN, ast.A_Expr_Kind_NOT_BETWEEN,
+		ast.A_Expr_Kind_BETWEEN_SYM, ast.A_Expr_Kind_NOT_BETWEEN_SYM:
+	default:
+		return ""
+	}
+	list, ok := e.Rexpr.(*ast.List)
+	if !ok || len(list.Items) != 2 {
+		return ""
+	}
+	switch ast.Node(p) {
+	case list.Items[0]:
+		return "from_"
+	case list.Items[1]:
+		return "to_"
+	}
+	return ""
 }
