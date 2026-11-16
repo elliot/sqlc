@@ -21,6 +21,10 @@ type Testcase struct {
 
 type ExecMeta struct {
 	InvalidSchema bool `json:"invalid_schema"`
+	// MinPostgreSQLVersion is the oldest PostgreSQL major release that
+	// accepts the case's schema and queries. Against an older server, the
+	// contexts and checks that need a live database skip the case.
+	MinPostgreSQLVersion int `json:"min_postgresql_version"`
 }
 
 type Exec struct {

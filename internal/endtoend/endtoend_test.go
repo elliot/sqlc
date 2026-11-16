@@ -20,6 +20,7 @@ import (
 	"github.com/sqlc-dev/sqlc/internal/opts"
 	"github.com/sqlc-dev/sqlc/internal/sqlcdebug"
 	"github.com/sqlc-dev/sqlc/internal/sqltest/docker"
+	"github.com/sqlc-dev/sqlc/internal/sqltest/local"
 	"github.com/sqlc-dev/sqlc/internal/sqltest/native"
 )
 
@@ -284,6 +285,14 @@ func TestReplay(t *testing.T) {
 				if len(args.Contexts) > 0 {
 					if !slices.Contains(args.Contexts, name) {
 						t.Skipf("unsupported context: %s", name)
+					}
+				}
+
+				// The managed-db context hands the case to a live server,
+				// which must be new enough for its syntax.
+				if name == "managed-db" && args.Meta.MinPostgreSQLVersion > 0 && postgresURI != "" {
+					if v := local.PostgreSQLServerMajorVersion(t, postgresURI); v < args.Meta.MinPostgreSQLVersion {
+						t.Skipf("needs PostgreSQL %d, server is %d", args.Meta.MinPostgreSQLVersion, v)
 					}
 				}
 

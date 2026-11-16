@@ -54,6 +54,11 @@ func TestValidSchema(t *testing.T) {
 
 				switch pkg.Engine {
 				case config.EnginePostgreSQL:
+					if replay.Exec != nil && replay.Exec.Meta.MinPostgreSQLVersion > 0 {
+						if v := local.PostgreSQLMajorVersion(t); v < replay.Exec.Meta.MinPostgreSQLVersion {
+							t.Skipf("needs PostgreSQL %d, server is %d", replay.Exec.Meta.MinPostgreSQLVersion, v)
+						}
+					}
 					local.PostgreSQL(t, schema)
 				case config.EngineMySQL:
 					local.MySQL(t, schema)

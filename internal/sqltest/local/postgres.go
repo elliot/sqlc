@@ -30,7 +30,10 @@ func ReadOnlyPostgreSQL(t *testing.T, migrations []string) string {
 	return postgreSQL(t, migrations, false)
 }
 
-func postgreSQL(t *testing.T, migrations []string, rw bool) string {
+// postgreSQLServerURI is the server the tests run against: the one
+// POSTGRESQL_SERVER_URI names, or else one started with Docker or from a
+// native installation.
+func postgreSQLServerURI(t *testing.T) string {
 	ctx := context.Background()
 	t.Helper()
 
@@ -53,6 +56,38 @@ func postgreSQL(t *testing.T, migrations []string, rw bool) string {
 			t.Skip("POSTGRESQL_SERVER_URI is empty and neither Docker nor native installation is available")
 		}
 	}
+	return dburi
+}
+
+// PostgreSQLMajorVersion reports the major version of the server the tests
+// run against, so that a test of syntax only newer releases accept can skip
+// an older one.
+func PostgreSQLMajorVersion(t *testing.T) int {
+	t.Helper()
+	return PostgreSQLServerMajorVersion(t, postgreSQLServerURI(t))
+}
+
+// PostgreSQLServerMajorVersion reports the major version of the server at
+// uri: 18 for PostgreSQL 18.2.
+func PostgreSQLServerMajorVersion(t *testing.T, uri string) int {
+	t.Helper()
+	ctx := context.Background()
+	pool, err := cache.Open(ctx, uri)
+	if err != nil {
+		t.Fatalf("PostgreSQL pool creation failed: %s", err)
+	}
+	var num int
+	if err := pool.QueryRow(ctx, "SELECT current_setting('server_version_num')::int").Scan(&num); err != nil {
+		t.Fatalf("PostgreSQL server version: %s", err)
+	}
+	return num / 10000
+}
+
+func postgreSQL(t *testing.T, migrations []string, rw bool) string {
+	ctx := context.Background()
+	t.Helper()
+
+	dburi := postgreSQLServerURI(t)
 
 	postgresPool, err := cache.Open(ctx, dburi)
 	if err != nil {

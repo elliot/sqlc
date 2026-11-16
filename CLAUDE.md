@@ -140,6 +140,10 @@ committed and `managed-db` reruns it against a live database, so a context can
 change the config a case is generated with and the experiments it is generated
 under. A case restricts itself to some of them with `"contexts": [...]` in its
 `exec.json`, and commits per-context expected errors as `stderr/<context>.txt`.
+A case whose SQL only newer PostgreSQL releases accept says so with
+`"meta": {"min_postgresql_version": 18}`: `managed-db` and `TestValidSchema`
+run it against a live server that new, as CI's is, and skip it against an
+older one, such as the `postgres:16` of `docker-compose.yml`.
 There is only one set of committed golden files, so every context is expected
 to generate identical code.
 

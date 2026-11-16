@@ -1,6 +1,5 @@
 {
-  "contexts": ["base", "core"],
   "meta": {
-    "invalid_schema": true
+    "min_postgresql_version": 18
   }
 }
