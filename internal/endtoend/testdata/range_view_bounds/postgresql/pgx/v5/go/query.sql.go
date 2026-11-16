@@ -15,7 +15,8 @@ const listViewBounds = `-- name: ListViewBounds :many
 SELECT lower(during) AS starts_at FROM reservation_periods
 `
 
-// A range a view passes on reaches a range function as the table's does.
+// A range a view passes on reaches a range function as the table's does,
+// and the view is a model in both analyzers.
 func (q *Queries) ListViewBounds(ctx context.Context) ([]pgtype.Timestamptz, error) {
 	rows, err := q.db.Query(ctx, listViewBounds)
 	if err != nil {
