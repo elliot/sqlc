@@ -387,6 +387,19 @@ func translate(node *nodes.Node) (ast.Node, error) {
 				case nodes.AlterTableType_AT_SetNotNull:
 					item.Subtype = ast.AT_SetNotNull
 
+				case nodes.AlterTableType_AT_AddConstraint:
+					// A primary key makes its columns NOT NULL, temporal or
+					// not, which is all the catalog keeps of it; one added
+					// with USING INDEX names no columns and changes nothing
+					// the catalog can see.
+					for _, name := range primaryKeyColumns(altercmd.Def) {
+						at.Cmds.Items = append(at.Cmds.Items, &ast.AlterTableCmd{
+							Name:    &name,
+							Subtype: ast.AT_SetNotNull,
+						})
+					}
+					continue
+
 				default:
 					continue
 				}
@@ -725,6 +738,19 @@ func translate(node *nodes.Node) (ast.Node, error) {
 	default:
 		return convert(node)
 	}
+}
+
+// primaryKeyColumns names the columns of the primary key a constraint
+// definition declares, or none when it declares something else.
+func primaryKeyColumns(def *nodes.Node) []string {
+	if def == nil {
+		return nil
+	}
+	con, ok := def.Node.(*nodes.Node_Constraint)
+	if !ok || con.Constraint.Contype != nodes.ConstrType_CONSTR_PRIMARY {
+		return nil
+	}
+	return stringSliceFromNodes(con.Constraint.Keys)
 }
 
 // columnTypeName is a column's type as the catalog needs it: the name the
