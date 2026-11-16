@@ -13,4 +13,5 @@ type Reservation struct {
 	Seats     any
 	RowIds    any
 	Price     any
+	Ratio     any
 }

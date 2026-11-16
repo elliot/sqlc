@@ -1,6 +1,8 @@
 package postgresql
 
 import (
+	"maps"
+
 	"github.com/sqlc-dev/sqlc/internal/core/seed"
 	"github.com/sqlc-dev/sqlc/internal/sql/catalog"
 )
@@ -12,7 +14,7 @@ func NewCatalog() *catalog.Catalog {
 	c.Schemas = append(c.Schemas, genInformationSchema())
 	c.SearchPath = []string{"pg_catalog"}
 	c.LoadExtension = loadExtension
-	c.RangeElements = rangeElements()
+	c.RangeElements = maps.Clone(rangeElements())
 	return c
 }
 

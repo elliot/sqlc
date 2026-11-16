@@ -3,6 +3,7 @@ package catalog
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/sqlc-dev/sqlc/internal/sql/ast"
 	"github.com/sqlc-dev/sqlc/internal/sql/sqlerr"
@@ -89,6 +90,52 @@ func (c *Catalog) createEnum(stmt *ast.CreateEnumStmt) error {
 		Vals: stringSlice(stmt.Vals),
 	})
 	return nil
+}
+
+// createRange records the subtype of a range type a schema declares, which
+// is all this catalog keeps of one: the type of a bound taken from it. The
+// range is known by the name the schema gave it and, in the default schema,
+// by its bare name as well, the two ways a column may spell it.
+func (c *Catalog) createRange(stmt *ast.CreateRangeStmt) error {
+	names := stringSlice(stmt.TypeName)
+	if len(names) == 0 {
+		return nil
+	}
+	var element string
+	for _, item := range listItems(stmt.Params) {
+		def, ok := item.(*ast.DefElem)
+		if !ok || def.Defname == nil || *def.Defname != "subtype" {
+			continue
+		}
+		if tn, ok := def.Arg.(*ast.TypeName); ok {
+			element = strings.Join(stringSlice(tn.Names), ".")
+		}
+	}
+	if element == "" {
+		return nil
+	}
+	if c.RangeElements == nil {
+		c.RangeElements = map[string]string{}
+	}
+	name := strings.ToLower(names[len(names)-1])
+	switch {
+	case len(names) == 1:
+		c.RangeElements[name] = element
+		c.RangeElements[strings.ToLower(c.DefaultSchema)+"."+name] = element
+	case strings.EqualFold(names[0], c.DefaultSchema):
+		c.RangeElements[name] = element
+		fallthrough
+	default:
+		c.RangeElements[strings.ToLower(strings.Join(names, "."))] = element
+	}
+	return nil
+}
+
+func listItems(list *ast.List) []ast.Node {
+	if list == nil {
+		return nil
+	}
+	return list.Items
 }
 
 func stringSlice(list *ast.List) []string {

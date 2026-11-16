@@ -21,7 +21,9 @@ SELECT
     lower(seats)      AS min_seats,
     upper(seats)      AS max_seats,
     lower(row_ids)    AS first_row_id,
-    lower(price)      AS min_price
+    lower(price)      AS min_price,
+    lower(ratio)      AS min_ratio,
+    upper(ratio)      AS max_ratio
 FROM reservations
 `
 
@@ -35,11 +37,14 @@ type ListBoundsRow struct {
 	MaxSeats       pgtype.Int4
 	FirstRowID     pgtype.Int8
 	MinPrice       pgtype.Numeric
+	MinRatio       pgtype.Float8
+	MaxRatio       pgtype.Float8
 }
 
 // lower() and upper() return a bound of the range, typed as the range's
 // subtype. A bound is NULL when the range is empty or unbounded on that
-// side, so it is nullable even though the column is not.
+// side, so it is nullable even though the column is not. A range the
+// schema declares has the subtype it declares.
 func (q *Queries) ListBounds(ctx context.Context) ([]ListBoundsRow, error) {
 	rows, err := q.db.Query(ctx, listBounds)
 	if err != nil {
@@ -59,6 +64,8 @@ func (q *Queries) ListBounds(ctx context.Context) ([]ListBoundsRow, error) {
 			&i.MaxSeats,
 			&i.FirstRowID,
 			&i.MinPrice,
+			&i.MinRatio,
+			&i.MaxRatio,
 		); err != nil {
 			return nil, err
 		}

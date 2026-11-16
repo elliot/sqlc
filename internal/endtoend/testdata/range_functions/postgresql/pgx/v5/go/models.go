@@ -17,4 +17,5 @@ type Reservation struct {
 	Seats     pgtype.Range[pgtype.Int4]
 	RowIds    pgtype.Range[pgtype.Int8]
 	Price     pgtype.Range[pgtype.Numeric]
+	Ratio     any
 }

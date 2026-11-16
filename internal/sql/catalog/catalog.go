@@ -14,7 +14,9 @@ type Catalog struct {
 	LoadExtension func(string) *Schema
 
 	// RangeElements maps a range type's name to the name of its subtype,
-	// the type of its bounds, for an engine that has range types.
+	// the type of its bounds, for an engine that has range types. It holds
+	// the engine's own ranges and those the schema declares, and belongs to
+	// this catalog alone, since a schema's declarations are added to it.
 	RangeElements map[string]string
 
 	// TODO: un-export
@@ -88,6 +90,9 @@ func (c *Catalog) Update(stmt ast.Statement, colGen columnGenerator) error {
 
 	case *ast.CreateEnumStmt:
 		err = c.createEnum(n)
+
+	case *ast.CreateRangeStmt:
+		err = c.createRange(n)
 
 	case *ast.CreateExtensionStmt:
 		err = c.createExtension(n)

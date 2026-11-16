@@ -1,7 +1,8 @@
 -- name: ListBounds :many
 -- lower() and upper() return a bound of the range, typed as the range's
 -- subtype. A bound is NULL when the range is empty or unbounded on that
--- side, so it is nullable even though the column is not.
+-- side, so it is nullable even though the column is not. A range the
+-- schema declares has the subtype it declares.
 SELECT
     lower(during)     AS starts_at,
     upper(during)     AS ends_at,
@@ -11,7 +12,9 @@ SELECT
     lower(seats)      AS min_seats,
     upper(seats)      AS max_seats,
     lower(row_ids)    AS first_row_id,
-    lower(price)      AS min_price
+    lower(price)      AS min_price,
+    lower(ratio)      AS min_ratio,
+    upper(ratio)      AS max_ratio
 FROM reservations;
 
 -- name: ListNames :many
