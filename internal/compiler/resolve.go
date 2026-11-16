@@ -154,6 +154,15 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 			return ""
 		}
 		return dataType(&found[0].Type)
+	}, subquery: func(sel *ast.SelectStmt) string {
+		if qc == nil {
+			return ""
+		}
+		cols, err := comp.outputColumns(qc, sel)
+		if err != nil || len(cols) != 1 || cols[0].IsArray {
+			return ""
+		}
+		return cols[0].DataType
 	}}
 
 	// rangeParam is the parameter a range expression gives a parameter
@@ -164,15 +173,22 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 	// the first column the expression is over. It stands for no column, so
 	// no column's override applies to it. ok is false for any other kind of
 	// expression, which the rules below type.
-	rangeParam := func(ref paramRef, expr ast.Node, prefix string) (Parameter, bool) {
+	rangeParam := func(ref paramRef, expr ast.Node, prefix string, array bool) (Parameter, bool) {
 		switch expr.(type) {
-		case *ast.FuncCall, *ast.A_Expr, *ast.CoalesceExpr, *ast.CaseExpr:
+		case *ast.FuncCall, *ast.A_Expr, *ast.CoalesceExpr, *ast.CaseExpr, *ast.SubLink, *ast.List:
 		default:
 			return Parameter{}, false
 		}
+		// Only an expression a range decided the type of is typed here;
+		// lower(email) = $1 is left to the rules below.
 		t := ranges.typeOf(expr)
-		if t.name == "" {
+		if t.name == "" || !t.ranged {
 			return Parameter{}, false
+		}
+		// An array of values to compare with, as = ANY takes, holds values
+		// of the expression's type; the array itself is not NULL.
+		if array {
+			t.nullable = false
 		}
 		var key string
 		columns := astutils.Search(expr, func(node ast.Node) bool {
@@ -198,6 +214,8 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 				Name:         name,
 				DataType:     t.name,
 				NotNull:      p.NotNull() && !t.nullable,
+				IsArray:      array,
+				ArrayDims:    map[bool]int{true: 1}[array],
 				IsNamedParam: isNamed,
 				IsSqlcSlice:  p.IsSqlcSlice(),
 			},
@@ -234,7 +252,8 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 			})
 
 		case *ast.A_Expr:
-			if p, ok := rangeParam(ref, comparedWith(n, ref.ref), betweenPrefix(n, ref.ref)); ok {
+			quantified := (n.Kind == ast.A_Expr_Kind_OP_ANY || n.Kind == ast.A_Expr_Kind_OP_ALL) && n.Rexpr == ast.Node(ref.ref)
+			if p, ok := rangeParam(ref, comparedWith(n, ref.ref), betweenPrefix(n, ref.ref), quantified); ok {
 				a = append(a, p)
 				continue
 			}
@@ -374,7 +393,7 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 			} else if ref.ref == n.Right {
 				prefix = "to_"
 			}
-			if p, ok := rangeParam(ref, n.Expr, prefix); ok {
+			if p, ok := rangeParam(ref, n.Expr, prefix, false); ok {
 				a = append(a, p)
 				continue
 			}
@@ -639,7 +658,7 @@ func (comp *Compiler) resolveCatalogRefs(qc *QueryCatalog, rvs []*ast.RangeVar, 
 				continue
 			}
 
-			if p, ok := rangeParam(ref, n.Expr, ""); ok {
+			if p, ok := rangeParam(ref, n.Expr, "", false); ok {
 				a = append(a, p)
 				continue
 			}

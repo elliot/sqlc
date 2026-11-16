@@ -392,6 +392,23 @@ func (a *analyzer) typePredicateList(e *ast.A_Expr) (exprType, error) {
 	if err != nil {
 		return exprType{}, err
 	}
+	// A placeholder tested against the list, $1 BETWEEN lower(r) AND
+	// upper(r), takes the type the list's values say.
+	if pr, ok := e.Lexpr.(*ast.ParamRef); ok && leftT.typeOID == 0 && leftT.expr == nil {
+		if l, ok := e.Rexpr.(*ast.List); ok {
+			for _, item := range listItems(l) {
+				t, err := a.typeExpr(item)
+				if err != nil {
+					return exprType{}, err
+				}
+				if t.typeOID != 0 || t.expr != nil {
+					a.inferParam(pr, t)
+					a.nameParamAfter(pr.Number, item)
+					break
+				}
+			}
+		}
+	}
 	if l, ok := e.Rexpr.(*ast.List); ok {
 		for _, item := range listItems(l) {
 			if err := a.typeOperands(item, leftT); err != nil {

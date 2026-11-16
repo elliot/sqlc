@@ -139,6 +139,12 @@ func (c *Compiler) outputColumns(qc *QueryCatalog, node ast.Node) ([]*Column, er
 				return ""
 			}
 			return refs[0].DataType
+		}, subquery: func(sel *ast.SelectStmt) string {
+			cols, err := c.outputColumns(qc, sel)
+			if err != nil || len(cols) != 1 || cols[0].IsArray {
+				return ""
+			}
+			return cols[0].DataType
 		}}
 		switch n := res.Val.(type) {
 

@@ -17,6 +17,9 @@ type rangeTyper struct {
 	cat *catalog.Catalog
 	// column is the type of a column reference, or "" when it is not known.
 	column func(*ast.ColumnRef) string
+	// subquery is the type of the one column a scalar subquery returns, or
+	// "" when it is not known; nil when the caller cannot type one.
+	subquery func(*ast.SelectStmt) string
 }
 
 // rangeType is what a rangeTyper knows of an expression: its type name, ""
@@ -25,6 +28,9 @@ type rangeTyper struct {
 type rangeType struct {
 	name     string
 	nullable bool
+	// ranged is whether a range decided the type: the expression is a
+	// range or multirange, or a range function or operator computed it.
+	ranged bool
 }
 
 // typeOf types an expression as far as the typer can.
@@ -34,7 +40,7 @@ func (r rangeTyper) typeOf(n ast.Node) rangeType {
 		if hasStarRef(n) {
 			return rangeType{}
 		}
-		return rangeType{name: r.column(n)}
+		return r.value(r.column(n))
 	case *ast.TypeCast:
 		if n.TypeName == nil {
 			return rangeType{}
@@ -43,7 +49,7 @@ func (r rangeTyper) typeOf(n ast.Node) rangeType {
 		if col.IsArray {
 			return rangeType{}
 		}
-		return rangeType{name: col.DataType}
+		return r.value(col.DataType)
 	case *ast.FuncCall:
 		argTypes := r.argTypes(n)
 		fun, err := r.cat.ResolveFuncCallWithArgTypes(n, argTypes)
@@ -56,19 +62,34 @@ func (r rangeTyper) typeOf(n ast.Node) rangeType {
 		// A function that names its result type, as the tstzrange
 		// constructor does, returns that type whatever it is called with.
 		if fun.ReturnType != nil && !isPseudoType(fun.ReturnType.Name) {
-			return rangeType{name: dataType(fun.ReturnType)}
+			return r.value(dataType(fun.ReturnType))
 		}
 		return rangeType{}
 	case *ast.A_Expr:
 		t, _ := r.operatorResult(astutils.Join(n.Name, ""), r.typeOf(n.Lexpr).name, r.typeOf(n.Rexpr).name)
 		return t
+	case *ast.SubLink:
+		// A scalar subquery has the type of the column it returns.
+		if n.SubLinkType == ast.EXPR_SUBLINK && r.subquery != nil {
+			if sel, ok := n.Subselect.(*ast.SelectStmt); ok {
+				return r.value(r.subquery(sel))
+			}
+		}
+	case *ast.List:
+		// The values of a list, as BETWEEN and IN test against, share a
+		// type, which any of them may say.
+		for _, item := range n.Items {
+			if t := r.typeOf(item); t.name != "" {
+				return t
+			}
+		}
 	case *ast.CoalesceExpr:
 		// The alternatives of a COALESCE share a type, which any of them
 		// may say.
 		if n.Args != nil {
 			for _, arg := range n.Args.Items {
 				if t := r.typeOf(arg); t.name != "" {
-					return rangeType{name: t.name, nullable: t.nullable}
+					return t
 				}
 			}
 		}
@@ -87,7 +108,7 @@ func (r rangeTyper) typeOf(n ast.Node) rangeType {
 				continue
 			}
 			if t := r.typeOf(result); t.name != "" {
-				return rangeType{name: t.name}
+				return rangeType{name: t.name, ranged: t.ranged}
 			}
 		}
 	}
@@ -100,6 +121,13 @@ func isPseudoType(typeName string) bool {
 	name := strings.ToLower(typeName)
 	return strings.HasPrefix(name, "any") || name == "void" || name == "record" ||
 		name == "trigger" || name == "event_trigger" || name == "internal" || name == "unknown"
+}
+
+// value types a value of a known type, which a range decided when it is a
+// range or multirange.
+func (r rangeTyper) value(typeName string) rangeType {
+	_, _, ranged := r.rangeOf(typeName)
+	return rangeType{name: typeName, ranged: ranged}
 }
 
 // argTypes is the type of each positional argument of a call, as far as the
@@ -154,16 +182,16 @@ func (r rangeTyper) funcResult(fun *catalog.Function, argTypes []string) (rangeT
 		if !ok {
 			return rangeType{}, false
 		}
-		return rangeType{name: element, nullable: true}, true
+		return rangeType{name: element, nullable: true, ranged: true}, true
 	case polyRange:
-		return rangeType{name: rng}, true
+		return rangeType{name: rng, ranged: true}, true
 	case polyMultirange:
 		if multirange == "" {
 			if multirange, ok = r.cat.RangeMultirange(rng); !ok {
 				return rangeType{}, false
 			}
 		}
-		return rangeType{name: multirange}, true
+		return rangeType{name: multirange, ranged: true}, true
 	}
 	return rangeType{}, false
 }
@@ -181,12 +209,12 @@ func (r rangeTyper) operatorResult(op, left, right string) (rangeType, bool) {
 	}
 	switch op {
 	case "&&", "@>", "<@", "-|-", "<<", ">>", "&<", "&>":
-		return rangeType{name: "bool"}, true
+		return rangeType{name: "bool", ranged: true}, true
 	case "+", "-", "*":
 		if leftMulti != "" || (leftOK && rightMulti == "") {
-			return rangeType{name: left}, true
+			return rangeType{name: left, ranged: true}, true
 		}
-		return rangeType{name: right}, true
+		return rangeType{name: right, ranged: true}, true
 	}
 	return rangeType{}, false
 }
